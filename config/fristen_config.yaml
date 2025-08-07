@@ -1,0 +1,42 @@
+departments:
+  - AT
+  - EK
+  - EW
+  - IS
+  - MA
+  - PE
+  - PN
+  - QK
+  - QM
+  - RA
+  - RM
+  - TS
+  - VB
+  - VS
+
+recipients:
+  AT: ["mustafa.massli@zyagnum.com"]
+  EK: ["mustafa.massli@zyagnum.com"]
+  EW: ["mustafa.massli@zyagnum.com"]
+  IS: ["mustafa.massli@zyagnum.com"]
+  MA: ["mustafa.massli@zyagnum.com"]
+  PE: ["mustafa.massli@zyagnum.com"]
+  PN: ["mustafa.massli@zyagnum.com"]
+  QK: ["mustafa.massli@zyagnum.com"]
+  QM: ["mustafa.massli@zyagnum.com"]
+  RA: ["mustafa.massli@zyagnum.com"]
+  RM: ["mustafa.massli@zyagnum.com"]
+  TS: ["mustafa.massli@zyagnum.com"]
+  VB: ["mustafa.massli@zyagnum.com"]
+  VS: ["mustafa.massli@zyagnum.com"]
+  default: ["mustafa.massli@zyagnum.com"]
+
+email_settings:
+  cc: ["mustafa.massli@zyagnum.com"]
+  subject_template: "Aktualitätsprüfung Dokumente Abteilung {department} - {date}"
+  
+reminder_settings:
+  check_dates:
+    - "01-08"  # January 8
+    - "07-08"  # July 8
+  remind_after_days: 3 
