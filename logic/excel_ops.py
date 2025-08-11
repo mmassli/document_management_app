@@ -143,8 +143,6 @@ class ExcelOperations:
             self.app.log_message(f"❌ Error getting Excel info: {str(e)}")
             raise
 
-
-
     def validate_excel_file(self, file_path):
         """Validate that file is a readable Excel file"""
         try:
@@ -210,15 +208,20 @@ class ExcelOperations:
 
 
 
-    def update_excel_tracking(self, doc_prefix, attachment_filename):
+    def update_excel_tracking(self, doc_prefix, attachment_filename, has_multiple_formats=False, all_files_in_group=None):
         """
         Update Excel tracking file with file replacement information.
         
         Args:
             doc_prefix (str): The document prefix to match in column B
             attachment_filename (str): The attachment filename to split and insert
+            has_multiple_formats (bool): Whether this file has multiple format versions
+            all_files_in_group (list): List of all files in the same group (for multiple formats)
         """
         try:
+            # Normalize the doc_prefix by removing trailing hyphens to fix matching issues
+            doc_prefix = (doc_prefix or "").rstrip("-")
+            
             self.app.log_message(f"🔍 Starting Excel tracking update...")
             
             # Store current document information for dialogs
@@ -253,11 +256,15 @@ class ExcelOperations:
             # Loop through all sheets to find all matches
             for sheet_name in workbook.sheetnames:
                 worksheet = workbook[sheet_name]
+                self.app.log_message(f"🔍 Searching sheet '{sheet_name}' for prefix '{doc_prefix}'")
                 # Check each row starting from row 9
                 for row_num in range(9, worksheet.max_row + 1):
                     # Check column B (index 1) for prefix match
                     cell_value = worksheet.cell(row=row_num, column=2).value
                     if cell_value:
+                        self.app.log_message(f"🔍 Row {row_num}, Column B: '{cell_value}' vs prefix '{doc_prefix}'")
+                        if self.has_same_document_id(attachment_filename, cell_value):
+                            self.app.log_message(f"✅ MATCH FOUND at row {row_num}: '{cell_value}'")
                         # --- BEGIN: In-place update for 'C' rows with exact document ID match ---
                         # Check for 'C' in column A and exact document ID match in column B
                         col_a_value = worksheet.cell(row=row_num, column=1).value
@@ -293,10 +300,22 @@ class ExcelOperations:
                             }
                             # Show dialog for new row only
                             from gui.dialogs import ExcelCellInputDialog
-                            dialog = ExcelCellInputDialog(self.app.root, None, new_row_data, document_info)
-                            self.app.root.wait_window(dialog.dialog)
+                            try:
+                                self.app.log_message(f"🔍 Creating Excel cell input dialog for: {attachment_filename}")
+                                dialog = ExcelCellInputDialog(self.app.root, None, new_row_data, document_info)
+                                # Ensure dialog is properly shown
+                                self.app.log_message(f"🔍 Showing Excel cell input dialog...")
+                                dialog.show_dialog()
+                                self.app.root.wait_window(dialog.dialog)
+                                self.app.log_message(f"🔍 Excel cell input dialog closed")
+                            except Exception as e:
+                                self.app.log_message(f"❌ Error creating Excel dialog: {str(e)}")
+                                # Fallback: use default values
+                                dialog = None
+                                dialog.result = {'new_row': {'E': '', 'F': 'aktuell gültig', 'G': '-'}}
+                            
                             # Apply user input if confirmed
-                            if dialog.result and 'new_row' in dialog.result:
+                            if dialog and dialog.result and 'new_row' in dialog.result:
                                 for col, value in dialog.result['new_row'].items():
                                     col_index = {'E': 5, 'F': 6, 'G': 7}[col]
                                     parsed_value = self._parse_date_value(value)
@@ -325,7 +344,7 @@ class ExcelOperations:
                             self.app.log_message(f"✅ In-place update completed and saved for row {row_num} in sheet '{sheet_name}'")
                             return True
                         # --- END: In-place update for 'C' rows with prefix match ---
-                        if str(cell_value).startswith(doc_prefix):
+                        if self.has_same_document_id(attachment_filename, cell_value):
                             # Store match information
                             all_matches.append({
                                 'sheet_name': sheet_name,
@@ -345,133 +364,9 @@ class ExcelOperations:
                     is_v1_file = True
                     self.app.log_message(f"🔍 Detected V1.0 file in Excel tracking: {attachment_filename}")
 
-            # If matches were found, process the last match
-            if all_matches:
-                # Get the last match
-                last_match = all_matches[-1]
-                matched_sheet = last_match['sheet_name']
-                last_matched_row = last_match['row_num']
-                old_status = last_match['old_status']
-                
-                # Get the worksheet for the last match
-                worksheet = workbook[matched_sheet]
-                
-                # Enhanced logic for matching and comparison - determine insertion position
-                insertion_row = last_matched_row
-                
-                # Look for "V" character in the filename and check the character beside it
-                if is_v1_file:
-                    # Compare document IDs in Column B of existing rows
-                    for compare_row in range(9, last_matched_row + 1):  # Start from row 9
-                        col_b_value = str(worksheet.cell(row=compare_row, column=2).value or "")
-                        
-                        if self.has_same_document_id(attachment_filename, col_b_value):
-                            # Compare last 3 characters as numbers
-                            try:
-                                current_last3 = int(col_b_value[-3:]) if len(col_b_value) >= 3 else 0
-                                new_last3 = int(attachment_filename[7:10]) if len(attachment_filename) >= 10 else 0
-                                
-                                if new_last3 > current_last3:
-                                    # Found a match with larger number - use this position
-                                    insertion_row = compare_row
-                                    break
-                            except ValueError:
-                                continue
-                
-                # Set status in column A to "E" (Executed/Edited) for the matched row
-                worksheet.cell(row=insertion_row, column=1, value="E")
-                
-                # Insert a new row below the determined insertion row
-                worksheet.insert_rows(insertion_row + 1)
-                
-                # Copy formulas and formatting from the row above and adjust them
-                formula_count = 0
-                for col_num in range(1, worksheet.max_column + 1):
-                    above_cell = worksheet.cell(row=insertion_row, column=col_num)
-                    new_cell = worksheet.cell(row=insertion_row + 1, column=col_num)
-                    
-                    # Copy cell formatting (style, borders, etc.)
-                    if above_cell.has_style:
-                        new_cell._style = above_cell._style
-                    
-                    # Check if the above cell contains a formula
-                    if above_cell.value and isinstance(above_cell.value, str) and above_cell.value.startswith('='):
-                        try:
-                            # Manual formula adjustment - Excel's automatic adjustment is not working correctly
-                            old_formula = above_cell.value
-                            new_formula = self._adjust_formula_for_new_row_intelligent(old_formula, insertion_row, insertion_row + 1, col_num)
-                            new_cell.value = new_formula
-                            formula_count += 1
-                        except Exception as e:
-                            pass  # Silently handle formula errors
-                    else:
-                        # Copy value if it's not a formula
-                        new_cell.value = above_cell.value
-                    
-                    # Copy hyperlink if present
-                    if above_cell.hyperlink:
-                        try:
-                            old_hyperlink = above_cell.hyperlink
-                            # Create new hyperlink with adjusted target
-                            new_target = self._adjust_hyperlink_target(old_hyperlink.target, insertion_row, insertion_row + 1)
-                            new_cell.hyperlink = new_target
-                        except Exception as e:
-                            pass  # Silently handle hyperlink errors
-                
-                # Now adjust ALL formulas and hyperlinks in rows below the inserted row
-                adjusted_formulas_count = 0
-                adjusted_hyperlinks_count = 0
-                skipped_empty_rows = 0
-                
-                for adjust_row in range(insertion_row + 2, worksheet.max_row + 1):
-                    # Check if column A has a value (only for rows 9 and above)
-                    if adjust_row >= 9:
-                        column_a_value = worksheet.cell(row=adjust_row, column=1).value
-                        if column_a_value is None or str(column_a_value).strip() == "":
-                            # Skip this row if column A is empty
-                            skipped_empty_rows += 1
-                            continue
-                    
-                    # Process this row since column A has data
-                    for col_num in range(1, worksheet.max_column + 1):
-                        cell = worksheet.cell(row=adjust_row, column=col_num)
-                        
-                        # Handle formulas
-                        if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
-                            try:
-                                old_formula = cell.value
-                                new_formula = self._adjust_formula_for_new_row_intelligent(old_formula, insertion_row, adjust_row, col_num)
-                                cell.value = new_formula
-                                adjusted_formulas_count += 1
-                            except Exception as e:
-                                pass  # Silently handle formula errors
-                        
-                        # Handle hyperlinks
-                        if cell.hyperlink:
-                            try:
-                                old_hyperlink = cell.hyperlink
-                                # Create new hyperlink with adjusted target
-                                new_target = self._adjust_hyperlink_target(old_hyperlink.target, insertion_row, adjust_row)
-                                cell.hyperlink = new_target
-                                adjusted_hyperlinks_count += 1
-                            except Exception as e:
-                                pass  # Silently handle hyperlink errors
-                
-                # Validate and repair formulas after insertion
-                self._validate_and_repair_formulas(worksheet, insertion_row)
-                
-                # Handle hyperlinks for the found row and new row
-                self._update_hyperlink_logic(worksheet, insertion_row, attachment_filename, is_v1_file)
-                
-                # Fill in the new row with split filename parts
-                self._fill_new_row_with_filename_parts(worksheet, insertion_row + 1, attachment_filename, old_status)
-                
-                # Set the correct formula for column I in the new row
-                self._set_column_i_formula(worksheet, insertion_row + 1)
-            
-            # Handle V1.0 files - always check for matches using document ID
-            elif is_v1_file:
-                self.app.log_message(f"🚀 V1.0 file detected - checking for matches using document ID")
+            # Handle V1.0 files first - they use special document ID matching logic
+            if is_v1_file:
+                self.app.log_message(f"🚀 V1.0 file detected - using document ID pattern matching (bypassing prefix search)")
                 
                 # Extract document ID from filename
                 doc_id_from_filename = self.extract_document_id(attachment_filename)
@@ -627,15 +522,145 @@ class ExcelOperations:
                             pass  # Silently handle hyperlink errors
                 
                 # Fill in the new row with filename parts
-                self._fill_new_row_with_filename_parts(worksheet, insertion_row + 1, attachment_filename, "A")
+                self._fill_new_row_with_filename_parts(worksheet, insertion_row + 1, attachment_filename, "A", has_multiple_formats, all_files_in_group)
                 
                 # Set the correct formula for column I in the new row
                 self._set_column_i_formula(worksheet, insertion_row + 1)
                 
                 # Handle hyperlinks for the new row
-                self._update_hyperlink_logic(worksheet, insertion_row, attachment_filename, is_v1_file)
+                self._update_hyperlink_logic(worksheet, insertion_row, attachment_filename, is_v1_file, has_multiple_formats, all_files_in_group)
+                
+                # Dialog is now handled in _update_hyperlink_logic with priority file check
                 
                 match_found = True  # Mark as found so it gets saved
+            
+            # If matches were found, process the last match
+            elif all_matches:
+                # Get the last match
+                last_match = all_matches[-1]
+                matched_sheet = last_match['sheet_name']
+                last_matched_row = last_match['row_num']
+                old_status = last_match['old_status']
+                
+                # Get the worksheet for the last match
+                worksheet = workbook[matched_sheet]
+                
+                # Enhanced logic for matching and comparison - determine insertion position
+                insertion_row = last_matched_row
+                
+                # Look for "V" character in the filename and check the character beside it
+                if is_v1_file:
+                    # Compare document IDs in Column B of existing rows
+                    for compare_row in range(9, last_matched_row + 1):  # Start from row 9
+                        col_b_value = str(worksheet.cell(row=compare_row, column=2).value or "")
+                        
+                        if self.has_same_document_id(attachment_filename, col_b_value):
+                            # Compare last 3 characters as numbers
+                            try:
+                                current_last3 = int(col_b_value[-3:]) if len(col_b_value) >= 3 else 0
+                                new_last3 = int(attachment_filename[7:10]) if len(attachment_filename) >= 10 else 0
+                                
+                                if new_last3 > current_last3:
+                                    # Found a match with larger number - use this position
+                                    insertion_row = compare_row
+                                    break
+                            except ValueError:
+                                continue
+                
+                # Set status in column A to "E" (Executed/Edited) for the matched row
+                worksheet.cell(row=insertion_row, column=1, value="E")
+                
+                # Insert a new row below the determined insertion row
+                worksheet.insert_rows(insertion_row + 1)
+                
+                # Copy formulas and formatting from the row above and adjust them
+                formula_count = 0
+                for col_num in range(1, worksheet.max_column + 1):
+                    above_cell = worksheet.cell(row=insertion_row, column=col_num)
+                    new_cell = worksheet.cell(row=insertion_row + 1, column=col_num)
+                    
+                    # Copy cell formatting (style, borders, etc.)
+                    if above_cell.has_style:
+                        new_cell._style = above_cell._style
+                    
+                    # Check if the above cell contains a formula
+                    if above_cell.value and isinstance(above_cell.value, str) and above_cell.value.startswith('='):
+                        try:
+                            # Manual formula adjustment - Excel's automatic adjustment is not working correctly
+                            old_formula = above_cell.value
+                            new_formula = self._adjust_formula_for_new_row_intelligent(old_formula, insertion_row, insertion_row + 1, col_num)
+                            new_cell.value = new_formula
+                            formula_count += 1
+                        except Exception as e:
+                            pass  # Silently handle formula errors
+                    else:
+                        # Copy value if it's not a formula
+                        new_cell.value = above_cell.value
+                    
+                    # Copy hyperlink if present
+                    if above_cell.hyperlink:
+                        try:
+                            old_hyperlink = above_cell.hyperlink
+                            # Create new hyperlink with adjusted target
+                            new_target = self._adjust_hyperlink_target(old_hyperlink.target, insertion_row, insertion_row + 1)
+                            new_cell.hyperlink = new_target
+                        except Exception as e:
+                            pass  # Silently handle hyperlink errors
+                
+                # Now adjust ALL formulas and hyperlinks in rows below the inserted row
+                adjusted_formulas_count = 0
+                adjusted_hyperlinks_count = 0
+                skipped_empty_rows = 0
+                
+                for adjust_row in range(insertion_row + 2, worksheet.max_row + 1):
+                    # Check if column A has a value (only for rows 9 and above)
+                    if adjust_row >= 9:
+                        column_a_value = worksheet.cell(row=adjust_row, column=1).value
+                        if column_a_value is None or str(column_a_value).strip() == "":
+                            # Skip this row if column A is empty
+                            skipped_empty_rows += 1
+                            continue
+                    
+                    # Process this row since column A has data
+                    for col_num in range(1, worksheet.max_column + 1):
+                        cell = worksheet.cell(row=adjust_row, column=col_num)
+                        
+                        # Handle formulas
+                        if cell.value and isinstance(cell.value, str) and cell.value.startswith('='):
+                            try:
+                                old_formula = cell.value
+                                new_formula = self._adjust_formula_for_new_row_intelligent(old_formula, insertion_row, adjust_row, col_num)
+                                cell.value = new_formula
+                                adjusted_formulas_count += 1
+                            except Exception as e:
+                                pass  # Silently handle formula errors
+                        
+                        # Handle hyperlinks
+                        if cell.hyperlink:
+                            try:
+                                old_hyperlink = cell.hyperlink
+                                # Create new hyperlink with adjusted target
+                                new_target = self._adjust_hyperlink_target(old_hyperlink.target, insertion_row, adjust_row)
+                                cell.hyperlink = new_target
+                                adjusted_hyperlinks_count += 1
+                            except Exception as e:
+                                pass  # Silently handle hyperlink errors
+                
+                # Validate and repair formulas after insertion
+                self._validate_and_repair_formulas(worksheet, insertion_row)
+                
+                # Handle hyperlinks for the found row and new row
+                self._update_hyperlink_logic(worksheet, insertion_row, attachment_filename, is_v1_file, has_multiple_formats, all_files_in_group)
+                
+                # Dialog is now handled in _update_hyperlink_logic with priority file check
+                
+                # Fill in the new row with split filename parts
+                self._fill_new_row_with_filename_parts(worksheet, insertion_row + 1, attachment_filename, old_status, has_multiple_formats, all_files_in_group)
+                
+                # Set the correct formula for column I in the new row
+                self._set_column_i_formula(worksheet, insertion_row + 1)
+            
+
             
             # Save changes if a match was found
             if match_found:
@@ -667,7 +692,8 @@ class ExcelOperations:
                     self.app.log_message(f"❌ Error saving workbook: {str(e)}")
                     return False
             else:
-                self.app.log_message(f"⚠️ No matching row found for prefix: '{doc_prefix}'")
+                self.app.log_message(f"⚠️ No matching row found for prefix: '{doc_prefix}' and not a V1.0 file")
+                self.app.log_message(f"🔍 is_v1_file = {is_v1_file}, filename = {attachment_filename}")
                 return False
                 
         except Exception as e:
@@ -792,7 +818,7 @@ class ExcelOperations:
         except Exception:
             return False
 
-    def _fill_new_row_with_filename_parts(self, worksheet, row_num, attachment_filename, old_status):
+    def _fill_new_row_with_filename_parts(self, worksheet, row_num, attachment_filename, old_status, has_multiple_formats=False, all_files_in_group=None):
         """
         Updated: Split filename into document ID, version-language, and title.
         Writes to columns B, C, D.
@@ -802,6 +828,8 @@ class ExcelOperations:
             row_num (int): The row number to fill
             attachment_filename (str): The filename to split
             old_status: The status to put in column A
+            has_multiple_formats (bool): Whether this file has multiple format versions
+            all_files_in_group (list): List of all files in the same group (for multiple formats)
         """
         try:
             # Column A: Old status
@@ -809,6 +837,10 @@ class ExcelOperations:
 
             # Use the new regex-based splitting
             col_b_value, col_c_value, col_d_value = self._split_filename_with_regex(attachment_filename)
+
+            # Handle multiple formats in column D (title)
+            # Note: Multiple formats indicator removed per user request
+            # Only the priority file gets inserted into Excel without format indicators
 
             # Set values
             worksheet.cell(row=row_num, column=2, value=col_b_value)
@@ -818,7 +850,7 @@ class ExcelOperations:
         except Exception as e:
             self.app.log_message(f"❌ Error filling new row with filename parts: {str(e)}")
 
-    def _update_hyperlink_logic(self, worksheet, row_num, attachment_filename, is_v1_file=False):
+    def _update_hyperlink_logic(self, worksheet, row_num, attachment_filename, is_v1_file=False, has_multiple_formats=False, all_files_in_group=None):
         """
         Update hyperlink logic for the found row and new row.
         
@@ -827,6 +859,8 @@ class ExcelOperations:
             row_num (int): The row number where the match was found
             attachment_filename (str): The filename for creating hyperlinks
             is_v1_file (bool): Whether this is a V1.0 file (no found row to update)
+            has_multiple_formats (bool): Whether this file has multiple format versions
+            all_files_in_group (list): List of all files in the same group (for multiple formats)
         """
         try:
             # Store current attachment filename for dialogs
@@ -839,10 +873,31 @@ class ExcelOperations:
             if not archive_dir or not target_dir:
                 return
             
+            # Determine the priority filename for hyperlinks (PDF > Word > Excel > others)
+            hyperlink_filename = attachment_filename  # Default to current file
+            if has_multiple_formats and all_files_in_group:
+                # Find the priority file for hyperlinks
+                pdf_files = [f for f in all_files_in_group if f.suffix.lower() == '.pdf']
+                docx_files = [f for f in all_files_in_group if f.suffix.lower() == '.docx']
+                xlsx_files = [f for f in all_files_in_group if f.suffix.lower() == '.xlsx']
+                
+                if pdf_files:
+                    hyperlink_filename = pdf_files[0].name
+                    self.app.log_message(f"🔗 Using PDF for hyperlinks: {hyperlink_filename}")
+                elif docx_files:
+                    hyperlink_filename = docx_files[0].name
+                    self.app.log_message(f"🔗 Using Word for hyperlinks: {hyperlink_filename}")
+                elif xlsx_files:
+                    hyperlink_filename = xlsx_files[0].name
+                    self.app.log_message(f"🔗 Using Excel for hyperlinks: {hyperlink_filename}")
+                else:
+                    hyperlink_filename = all_files_in_group[0].name
+                    self.app.log_message(f"🔗 Using first file for hyperlinks: {hyperlink_filename}")
+            
             if not is_v1_file:
-                # 1. Replace the old hyperlink in the found cell (column J) with archive dir + actual replaced filename
+                # 1. Replace the old hyperlink in the found cell (column J) with archive dir + priority file
                 found_row_cell_j = worksheet.cell(row=row_num, column=10)  # Column J is index 10
-                archive_path = Path(archive_dir) / attachment_filename
+                archive_path = Path(archive_dir) / hyperlink_filename
                 
                 if archive_path.exists():
                     archive_hyperlink = f"file:///{archive_path.absolute().as_posix()}"
@@ -853,29 +908,46 @@ class ExcelOperations:
                     self.app.log_message(f"⚠️ Archive document not found at: {archive_path}")
                     found_row_cell_j.value = f"{archive_path} (Not Found)"
             
-            # 2. Add hyperlink in the new row (column J) with target dir + actual replaced filename
+            # 2. Add hyperlink in the new row (column J) with target dir + priority file
             new_row_cell_j = worksheet.cell(row=row_num + 1, column=10)  # Column J is index 10
-            target_path = Path(target_dir) / attachment_filename
+            target_path = Path(target_dir) / hyperlink_filename
             
             if target_path.exists():
                 target_hyperlink = f"file:///{target_path.absolute().as_posix()}"
-                # Show the full target path as the hyperlink text
+                
+                # Show the full target path as the hyperlink text (no format indicators)
                 new_row_cell_j.value = str(target_path)
+                
                 new_row_cell_j.hyperlink = target_hyperlink
             else:
                 self.app.log_message(f"⚠️ Target document not found at: {target_path}")
                 new_row_cell_j.value = f"{target_path} (Not Found)"
             
             # 3. Show dialog for user input in columns E, F, G
-            if is_v1_file:
-                self._show_v1_cell_input_dialog(worksheet, row_num)
-            else:
-                self._show_cell_input_dialog(worksheet, row_num)
+            # Only show dialog for priority files (PDF) in duplicate groups
+            should_show_dialog = True
+            
+            # Check if this is a duplicate group and if this file is the priority file
+            if has_multiple_formats and all_files_in_group:
+                # Find the priority file (PDF > Word > Excel > others)
+                pdf_files = [f for f in all_files_in_group if f.suffix.lower() == '.pdf']
+                if pdf_files:
+                    priority_file = pdf_files[0]
+                    # Only show dialog if this is the priority file
+                    should_show_dialog = (priority_file.name == attachment_filename)
+                    if not should_show_dialog:
+                        self.app.log_message(f"⏭️ Skipping dialog in _update_hyperlink_logic for non-priority file: {attachment_filename}")
+            
+            if should_show_dialog:
+                if is_v1_file:
+                    self._show_v1_cell_input_dialog(worksheet, row_num, has_multiple_formats, all_files_in_group)
+                else:
+                    self._show_cell_input_dialog(worksheet, row_num, has_multiple_formats, all_files_in_group)
             
         except Exception as e:
             self.app.log_message(f"❌ Error updating hyperlink logic: {str(e)}")
     
-    def _show_v1_cell_input_dialog(self, worksheet, row_num):
+    def _show_v1_cell_input_dialog(self, worksheet, row_num, has_multiple_formats=False, all_files_in_group=None):
         """
         Show dialog for user input in columns E, F, G for V1.0 files.
         V1.0 files only need new row data (no found row to update).
@@ -883,6 +955,8 @@ class ExcelOperations:
         Args:
             worksheet: The worksheet to modify
             row_num (int): The row number where the new row was inserted
+            has_multiple_formats (bool): Whether this file has multiple format versions
+            all_files_in_group (list): List of all files in the same group (for multiple formats)
         """
         try:
             # For V1.0 files, we only need to set up the new row data
@@ -898,15 +972,28 @@ class ExcelOperations:
                 'doc_prefix': getattr(self, 'current_doc_prefix', 'Unknown'),
                 'sheet_name': worksheet.title,
                 'row_num': row_num,
-                'is_v1_file': True
+                'is_v1_file': True,
+                'has_multiple_formats': has_multiple_formats,
+                'all_files_in_group': all_files_in_group
             }
             
             # Show the dialog with only new row data (no found row)
-            dialog = ExcelCellInputDialog(self.app.root, None, new_row_data, document_info)
-            self.app.root.wait_window(dialog.dialog)
+            try:
+                self.app.log_message(f"🔍 Creating V1.0 Excel cell input dialog for: {document_info.get('filename', 'Unknown')}")
+                dialog = ExcelCellInputDialog(self.app.root, None, new_row_data, document_info)
+                # Ensure dialog is properly shown
+                self.app.log_message(f"🔍 Showing V1.0 Excel cell input dialog...")
+                dialog.show_dialog()
+                self.app.root.wait_window(dialog.dialog)
+                self.app.log_message(f"🔍 V1.0 Excel cell input dialog closed")
+            except Exception as e:
+                self.app.log_message(f"❌ Error creating V1.0 Excel dialog: {str(e)}")
+                # Fallback: use default values
+                dialog = None
+                dialog.result = {'new_row': {'E': '', 'F': 'aktuell gültig', 'G': '-'}}
             
             # Apply the user input if dialog was confirmed
-            if dialog.result:
+            if dialog and dialog.result:
                 # Apply new row values only (no found row to update)
                 for col, value in dialog.result['new_row'].items():
                     col_index = {'E': 5, 'F': 6, 'G': 7}[col]
@@ -921,7 +1008,7 @@ class ExcelOperations:
         except Exception as e:
             self.app.log_message(f"❌ Error showing V1.0 cell input dialog: {str(e)}")
     
-    def _show_cell_input_dialog(self, worksheet, row_num):
+    def _show_cell_input_dialog(self, worksheet, row_num, has_multiple_formats=False, all_files_in_group=None):
         """
         Show dialog for user input in columns E, F, G for both found row and new row.
         The new row will have the exact same format as the found row.
@@ -929,6 +1016,8 @@ class ExcelOperations:
         Args:
             worksheet: The worksheet to modify
             row_num (int): The row number where the match was found
+            has_multiple_formats (bool): Whether this file has multiple format versions
+            all_files_in_group (list): List of all files in the same group (for multiple formats)
         """
         try:
             # Get current values from found row
@@ -951,15 +1040,28 @@ class ExcelOperations:
                 'doc_prefix': getattr(self, 'current_doc_prefix', 'Unknown'),
                 'sheet_name': worksheet.title,
                 'row_num': row_num,
-                'is_v1_file': False
+                'is_v1_file': False,
+                'has_multiple_formats': has_multiple_formats,
+                'all_files_in_group': all_files_in_group
             }
             
             # Show the dialog
-            dialog = ExcelCellInputDialog(self.app.root, found_row_data, new_row_data, document_info)
-            self.app.root.wait_window(dialog.dialog)
+            try:
+                self.app.log_message(f"🔍 Creating regular Excel cell input dialog for: {document_info.get('filename', 'Unknown')}")
+                dialog = ExcelCellInputDialog(self.app.root, found_row_data, new_row_data, document_info)
+                # Ensure dialog is properly shown
+                self.app.log_message(f"🔍 Showing regular Excel cell input dialog...")
+                dialog.show_dialog()
+                self.app.root.wait_window(dialog.dialog)
+                self.app.log_message(f"🔍 Regular Excel cell input dialog closed")
+            except Exception as e:
+                self.app.log_message(f"❌ Error creating Excel dialog: {str(e)}")
+                # Fallback: use default values
+                dialog = None
+                dialog.result = {'new_row': {'E': '', 'F': 'aktuell gültig', 'G': '-'}}
             
             # Apply the user input if dialog was confirmed
-            if dialog.result:
+            if dialog and dialog.result:
                 # Apply found row values (only if they exist)
                 if 'found_row' in dialog.result:
                     for col, value in dialog.result['found_row'].items():

@@ -19,6 +19,7 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import re
+import sys
 
 
 class DeadlineTracker:
@@ -26,8 +27,20 @@ class DeadlineTracker:
     
     def __init__(self, app):
         self.app = app
-        self.tracking_file = Path("config/fristen_tracking.json")
-        self.config_file = Path("config/fristen_config.yaml")
+        # Handle paths for both development and compiled environments
+        if getattr(sys, 'frozen', False):
+            # Running as compiled executable
+            base_dir = os.path.dirname(sys.executable)
+            self.tracking_file = Path(base_dir) / "config" / "fristen_tracking.json"
+            self.config_file = Path(base_dir) / "config" / "fristen_config.yaml"
+        else:
+            # Running in development
+            self.tracking_file = Path("config/fristen_tracking.json")
+            self.config_file = Path("config/fristen_config.yaml")
+        
+        # Ensure config directory exists
+        self.config_file.parent.mkdir(parents=True, exist_ok=True)
+        
         self.config = self._load_config()
         
     def _load_config(self):

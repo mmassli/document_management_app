@@ -71,19 +71,24 @@ class FileOperations:
         Process duplicate files with the following logic:
         1. Group files by name (ignoring extensions)
         2. For each group with duplicates:
-           - If PDF exists, prioritize PDF
-           - If no PDF, use any other version
-        3. Return list of files to process (one per unique name)
+           - ALL files are processed (replacement and watermarking)
+           - Files are grouped for Excel tracking (one entry per base name)
+           - PDF priority for hyperlinks in Excel
+        3. Return list of files to process (all files) and grouping info
         
         Args:
             file_paths (list): List of file paths to process
             
         Returns:
-            list: List of files to process (one per unique name, prioritized)
+            tuple: (files_to_process, file_groups) where:
+                   - files_to_process: List of all files to process
+                   - file_groups: Dict mapping base names to file lists for Excel tracking
         """
         try:
             # Group files by name (ignoring extensions)
             file_groups = {}
+            
+            self.app.log_message(f"🔍 Processing {len(file_paths)} files for duplicates...")
             
             for file_path in file_paths:
                 file_path = Path(file_path)
@@ -94,12 +99,17 @@ class FileOperations:
                 # Get filename without extension
                 name_without_ext = file_path.stem
                 
+                # Debug: Log file source
+                temp_dir = tempfile.gettempdir()
+                is_outlook_file = str(file_path).startswith(temp_dir)
+                self.app.log_message(f"🔍 File: {file_path.name} (Source: {'Outlook' if is_outlook_file else 'Browser'})")
+                
                 if name_without_ext not in file_groups:
                     file_groups[name_without_ext] = []
                 
                 file_groups[name_without_ext].append(file_path)
             
-            # Process each group and select the best file
+            # Process each group - ALL files are processed
             files_to_process = []
             duplicate_summary = []
             
@@ -108,47 +118,69 @@ class FileOperations:
                     # Single file - process normally
                     files_to_process.append(files[0])
                     self.app.log_message(f"📄 Single file: {files[0].name}")
+                    
+                    # Store single file info consistently
+                    file_groups[name_without_ext] = {
+                        'files': files,
+                        'priority_file': files[0],
+                        'has_multiple_formats': False
+                    }
                 else:
-                    # Multiple files with same name - handle duplicates
+                    # Multiple files with same name - process ALL files
                     duplicate_summary.append(f"'{name_without_ext}' ({len(files)} files)")
                     
-                    # Find PDF version first
+                    # Add ALL files to processing list
+                    files_to_process.extend(files)
+                    
+                    # Log all files being processed
+                    file_names = [f.name for f in files]
+                    self.app.log_message(f"📄 Duplicate group '{name_without_ext}': Processing ALL versions: {', '.join(file_names)}")
+                    
+                    # Determine priority file for Excel hyperlink
                     pdf_files = [f for f in files if f.suffix.lower() == '.pdf']
+                    docx_files = [f for f in files if f.suffix.lower() == '.docx']
+                    xlsx_files = [f for f in files if f.suffix.lower() == '.xlsx']
                     
+                    self.app.log_message(f"🔍 Priority selection for '{name_without_ext}': PDF={len(pdf_files)}, DOCX={len(docx_files)}, XLSX={len(xlsx_files)}")
+                    
+                    priority_file = None
                     if pdf_files:
-                        # PDF exists - use the first PDF file
-                        selected_file = pdf_files[0]
-                        self.app.log_message(f"📄 Duplicate group '{name_without_ext}': Selected PDF version: {selected_file.name}")
-                        if len(pdf_files) > 1:
-                            self.app.log_message(f"⚠️ Multiple PDF files found for '{name_without_ext}', using first one")
+                        priority_file = pdf_files[0]
+                        self.app.log_message(f"🔗 Excel hyperlink will use PDF version: {priority_file.name}")
+                    elif docx_files:
+                        priority_file = docx_files[0]
+                        self.app.log_message(f"🔗 Excel hyperlink will use Word version: {priority_file.name}")
+                    elif xlsx_files:
+                        priority_file = xlsx_files[0]
+                        self.app.log_message(f"🔗 Excel hyperlink will use Excel version: {priority_file.name}")
                     else:
-                        # No PDF - use any other version (first one)
-                        selected_file = files[0]
-                        self.app.log_message(f"📄 Duplicate group '{name_without_ext}': No PDF found, using: {selected_file.name}")
+                        priority_file = files[0]
+                        self.app.log_message(f"🔗 Excel hyperlink will use: {priority_file.name}")
                     
-                    files_to_process.append(selected_file)
+                    # Store priority file info in the group for Excel tracking
+                    file_groups[name_without_ext] = {
+                        'files': files,
+                        'priority_file': priority_file,
+                        'has_multiple_formats': True
+                    }
                     
-                    # Log skipped files
-                    skipped_files = [f for f in files if f != selected_file]
-                    if skipped_files:
-                        skipped_names = [f.name for f in skipped_files]
-                        self.app.log_message(f"⏭️ Skipped duplicates: {', '.join(skipped_names)}")
+                    self.app.log_message(f"🔍 Stored priority file for '{name_without_ext}': {priority_file.name}")
             
             # Log summary
             if duplicate_summary:
                 self.app.log_message(f"🔄 Duplicate handling summary:")
                 for summary in duplicate_summary:
                     self.app.log_message(f"   - {summary}")
-                self.app.log_message(f"✅ Processed {len(files_to_process)} unique files from {len(file_paths)} total files")
+                self.app.log_message(f"✅ Processing {len(files_to_process)} total files from {len(file_paths)} input files")
             else:
                 self.app.log_message(f"✅ No duplicates found - processing all {len(files_to_process)} files")
             
-            return files_to_process
+            return files_to_process, file_groups
             
         except Exception as e:
             self.app.log_message(f"❌ Error processing duplicate files: {str(e)}")
             # Fallback to original list if error occurs
-            return file_paths
+            return file_paths, {}
 
     def archive_files(self, files_to_archive, archive_dir):
         """Archive files to the archive directory with watermark for Word, PDF, and Excel documents"""

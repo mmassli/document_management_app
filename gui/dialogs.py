@@ -23,27 +23,78 @@ class ExcelCellInputDialog:
         self.document_info = document_info or {}
         self.result = None
         
-        # Create modal dialog
+        # Log dialog creation for debugging
+        logging.info(f"ExcelCellInputDialog: Creating dialog for document: {document_info.get('filename', 'Unknown') if document_info else 'Unknown'}")
+        
+        # Create modal dialog with improved handling for compiled executables
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Excel Cell Input - Columns E, F, G")
         self.dialog.geometry("700x650")  # Increased height to accommodate all elements
         self.dialog.resizable(True, True)
-        self.dialog.transient(parent)
-        self.dialog.grab_set()
+        
+        # Improved modal behavior for compiled executables
+        try:
+            self.dialog.transient(parent)
+            self.dialog.grab_set()
+            logging.info("ExcelCellInputDialog: Modal setup successful")
+        except Exception as e:
+            # Fallback for compiled executables
+            logging.warning(f"Modal dialog setup failed, using fallback: {e}")
+            self.dialog.focus_set()
+            self.dialog.lift()
         
         # Set minimum size to ensure buttons are visible
         self.dialog.minsize(600, 500)
         
-        # Center the dialog
-        self.dialog.update_idletasks()
-        x = (self.dialog.winfo_screenwidth() // 2) - (350)
-        y = (self.dialog.winfo_screenheight() // 2) - (325)
-        self.dialog.geometry(f"700x650+{x}+{y}")
+        # Center the dialog with improved positioning
+        try:
+            self.dialog.update_idletasks()
+            x = (self.dialog.winfo_screenwidth() // 2) - (350)
+            y = (self.dialog.winfo_screenheight() // 2) - (325)
+            self.dialog.geometry(f"700x650+{x}+{y}")
+            logging.info("ExcelCellInputDialog: Dialog centered successfully")
+        except Exception as e:
+            logging.warning(f"Dialog centering failed: {e}")
+            # Fallback positioning
+            self.dialog.geometry("700x650+100+100")
         
+        # Ensure the dialog is properly configured and visible
+        try:
+            self.dialog.update_idletasks()
+            self.dialog.update()
+            logging.info("ExcelCellInputDialog: Dialog updated successfully")
+        except Exception as e:
+            logging.warning(f"Dialog update failed: {e}")
+        
+        # Setup the UI
         self.setup_ui()
         
-        # Ensure the dialog is properly configured
-        self.dialog.update_idletasks()
+        # Show the dialog
+        self.show_dialog()
+    
+    def show_dialog(self):
+        """Ensure dialog is properly shown and visible"""
+        try:
+            # Force the dialog to be visible
+            self.dialog.deiconify()
+            self.dialog.lift()
+            self.dialog.focus_force()
+            
+            # Update the display
+            self.dialog.update_idletasks()
+            self.dialog.update()
+            
+            # Log dialog creation for debugging
+            logging.info(f"ExcelCellInputDialog created and shown successfully")
+            
+        except Exception as e:
+            logging.error(f"Error showing dialog: {e}")
+            # Try alternative approach
+            try:
+                self.dialog.wm_state('normal')
+                self.dialog.focus_set()
+            except Exception as e2:
+                logging.error(f"Alternative dialog showing also failed: {e2}")
     
     def setup_ui(self):
         """Setup the dialog UI"""
@@ -140,6 +191,17 @@ class ExcelCellInputDialog:
             filename_label.grid(row=0, column=1, sticky=tk.W)
             # Make filename bold for emphasis
             filename_label.config(font=("Segoe UI", 10, "bold"))
+            
+            # Show multiple formats information if available
+            if self.document_info.get('has_multiple_formats', False) and self.document_info.get('all_files_in_group'):
+                all_files = self.document_info['all_files_in_group']
+                extensions = [Path(f).suffix.lower() for f in all_files]
+                unique_extensions = list(set(extensions))
+                if len(unique_extensions) > 1:
+                    format_text = f"📋 Multiple Formats Available: {', '.join(unique_extensions)}"
+                    format_label = ttk.Label(info_frame, text=format_text, font=ModernStyle.NORMAL_FONT, foreground="green")
+                    format_label.grid(row=0, column=2, sticky=tk.W, padx=(10, 0))
+                    format_label.config(font=("Segoe UI", 9, "italic"))
         
         # Document prefix
         if 'doc_prefix' in self.document_info:
@@ -254,18 +316,34 @@ class ExcelCellInputDialog:
     def show_calendar(self, var):
         """Show calendar picker for date selection"""
         try:
-            # Create a simple date picker dialog
+            # Create a simple date picker dialog with improved handling
             calendar_dialog = tk.Toplevel(self.dialog)
             calendar_dialog.title("Select Date")
             calendar_dialog.geometry("300x250")
-            calendar_dialog.transient(self.dialog)
-            calendar_dialog.grab_set()
             
-            # Center the dialog
-            calendar_dialog.update_idletasks()
-            x = (calendar_dialog.winfo_screenwidth() // 2) - (150)
-            y = (calendar_dialog.winfo_screenheight() // 2) - (125)
-            calendar_dialog.geometry(f"300x250+{x}+{y}")
+            # Improved modal behavior for compiled executables
+            try:
+                calendar_dialog.transient(self.dialog)
+                calendar_dialog.grab_set()
+            except Exception as e:
+                logging.warning(f"Calendar modal setup failed: {e}")
+                calendar_dialog.focus_set()
+                calendar_dialog.lift()
+            
+            # Center the dialog with improved positioning
+            try:
+                calendar_dialog.update_idletasks()
+                x = (calendar_dialog.winfo_screenwidth() // 2) - (150)
+                y = (calendar_dialog.winfo_screenheight() // 2) - (125)
+                calendar_dialog.geometry(f"300x250+{x}+{y}")
+            except Exception as e:
+                logging.warning(f"Calendar centering failed: {e}")
+                calendar_dialog.geometry("300x250+200+200")
+            
+            # Ensure calendar dialog is visible
+            calendar_dialog.deiconify()
+            calendar_dialog.lift()
+            calendar_dialog.focus_force()
             
             # Calendar widget
             cal = DateEntry(calendar_dialog, width=20, background='darkblue',
@@ -286,8 +364,16 @@ class ExcelCellInputDialog:
             ttk.Button(button_frame, text="OK", command=set_date).pack(side=tk.LEFT, padx=(0, 5))
             ttk.Button(button_frame, text="Cancel", command=calendar_dialog.destroy).pack(side=tk.LEFT)
             
+            # Ensure calendar dialog is properly displayed
+            try:
+                calendar_dialog.update_idletasks()
+                calendar_dialog.update()
+            except Exception as e:
+                logging.warning(f"Calendar dialog update failed: {e}")
+            
         except Exception as e:
             # Fallback to manual entry if calendar fails
+            logging.error(f"Calendar creation failed: {e}")
             messagebox.showwarning("Calendar Error", f"Calendar picker not available: {str(e)}\nPlease enter date manually in format DD.MM.YYYY")
     
     def set_aktuell_gueltig(self, vars_list):
@@ -452,17 +538,17 @@ class OutlookAttachmentDialog:
         att_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Attachment treeview with multiple selection enabled
-        att_columns = ("Name", "Size", "Type", "Email Subject")
+        att_columns = ("Name", "Date", "Type", "Email Subject")
         self.attachment_tree = ttk.Treeview(att_frame, columns=att_columns, show="headings", height=15, selectmode="extended")
 
         # Configure columns
         self.attachment_tree.heading("Name", text="Attachment Name")
-        self.attachment_tree.heading("Size", text="Size")
+        self.attachment_tree.heading("Date", text="Email Date")
         self.attachment_tree.heading("Type", text="Type")
         self.attachment_tree.heading("Email Subject", text="From Email")
 
         self.attachment_tree.column("Name", width=250)
-        self.attachment_tree.column("Size", width=100)
+        self.attachment_tree.column("Date", width=120)
         self.attachment_tree.column("Type", width=100)
         self.attachment_tree.column("Email Subject", width=300)
 
@@ -481,25 +567,56 @@ class OutlookAttachmentDialog:
 
     def load_outlook_emails(self):
         """Load emails from Outlook"""
+        logging.info("Starting to load emails from Outlook...")
         if not OUTLOOK_AVAILABLE:
             self.status_label.config(text="❌ Outlook COM interface not available")
             messagebox.showerror("Outlook Not Available",
                                  "The Outlook integration requires the pywin32 package.\n"
-                                 "Install it with: pip install pywin32")
+                                 "Please install pywin32 and restart the application.")
+            logging.error("Outlook COM interface not available.")
             return
 
         try:
             self.status_label.config(text="🔄 Connecting to Outlook...")
-            self.dialog.update()
-
-            # Connect to Outlook
+            logging.info("Connecting to Outlook COM...")
             self.outlook = win32com.client.Dispatch("Outlook.Application")
             namespace = self.outlook.GetNamespace("MAPI")
             inbox = namespace.GetDefaultFolder(6)  # 6 = Inbox
-
-            # Get recent emails with attachments
+            
+            # Clear any existing filters and get ALL items
             messages = inbox.Items
             messages.Sort("[ReceivedTime]", True)  # Sort by received time, newest first
+            
+            # Try to get more emails by using a broader filter or no filter
+            try:
+                # First try to get all items without any restriction
+                message_count = messages.Count
+                logging.info(f"Initial fetch: {message_count} messages from Outlook.")
+                
+                # If we get very few messages, try to clear any view filters
+                if message_count < 50:  # Suspiciously low number
+                    logging.info("Low message count detected, attempting to clear filters...")
+                    # Try to get items with a very broad date range
+                    try:
+                        # Get items from the last 10 years to ensure we get everything
+                        from datetime import datetime, timedelta
+                        ten_years_ago = datetime.now() - timedelta(days=3650)
+                        date_filter = ten_years_ago.strftime("%m/%d/%Y")
+                        messages = messages.Restrict(f"[ReceivedTime] >= '{date_filter}'")
+                        message_count = messages.Count
+                        logging.info(f"After date filter expansion: {message_count} messages")
+                    except Exception as filter_error:
+                        logging.warning(f"Date filter expansion failed: {filter_error}")
+                        # Fall back to original messages
+                        messages = inbox.Items
+                        messages.Sort("[ReceivedTime]", True)
+                        message_count = messages.Count
+                        
+            except Exception as e:
+                logging.warning(f"Error during message count check: {e}")
+                message_count = messages.Count
+                
+            logging.info(f"Final message count: {message_count} messages from Outlook.")
 
             # Clear existing items
             for item in self.email_tree.get_children():
@@ -507,66 +624,148 @@ class OutlookAttachmentDialog:
             for item in self.attachment_tree.get_children():
                 self.attachment_tree.delete(item)
 
-            self.status_label.config(text="📧 Loading emails with Excel/PDF/Word attachments...")
+            self.status_label.config(text="📧 Scanning all emails for filtered attachments...")
             self.dialog.update()
-
-            # Process emails
+            
+            # Process emails - Safe iteration to handle COM object issues
             email_count = 0
             attachment_count = 0
+            filtered_extensions = {'.pdf', '.doc', '.docx', '.xls', '.xlsx', '.xlsm', '.xlsb'}
+            processed_count = 0
 
-            for i, message in enumerate(messages):
-                if i >= 50:  # Limit to 50 most recent emails
-                    break
+            # Create a safe list of messages to iterate over
+            message_list = []
+            for i in range(messages.Count):
+                try:
+                    message_list.append(messages.Item(i + 1))
+                except Exception as e:
+                    logging.warning(f"Skipping message {i+1} due to error: {e}")
+                    continue
+
+            logging.info(f"Successfully loaded {len(message_list)} messages for processing")
+            
+            # If we still have very few messages, try alternative approaches
+            if len(message_list) < 50:
+                logging.info("Still low message count, trying alternative methods...")
+                try:
+                    # Try getting items from different folders or with different filters
+                    all_items = inbox.Items
+                    all_items.Sort("[ReceivedTime]", True)
+                    
+                    # Try without any date restrictions
+                    alternative_messages = []
+                    for i in range(all_items.Count):
+                        try:
+                            msg = all_items.Item(i + 1)
+                            alternative_messages.append(msg)
+                        except Exception as e:
+                            logging.warning(f"Skipping alternative message {i+1}: {e}")
+                            continue
+                    
+                    if len(alternative_messages) > len(message_list):
+                        logging.info(f"Alternative method found {len(alternative_messages)} messages vs {len(message_list)}")
+                        message_list = alternative_messages
+                    
+                    # If still low, try accessing the inbox differently
+                    if len(message_list) < 50:
+                        logging.info("Trying to access inbox with different method...")
+                        try:
+                            # Try to get items without any sorting first
+                            raw_items = inbox.Items
+                            raw_messages = []
+                            for i in range(raw_items.Count):
+                                try:
+                                    msg = raw_items.Item(i + 1)
+                                    raw_messages.append(msg)
+                                except Exception as e:
+                                    logging.warning(f"Skipping raw message {i+1}: {e}")
+                                    continue
+                            
+                            if len(raw_messages) > len(message_list):
+                                logging.info(f"Raw method found {len(raw_messages)} messages vs {len(message_list)}")
+                                message_list = raw_messages
+                                
+                        except Exception as raw_error:
+                            logging.warning(f"Raw method failed: {raw_error}")
+                        
+                except Exception as alt_error:
+                    logging.warning(f"Alternative method failed: {alt_error}")
+
+            # Log the date range we're working with
+            if len(message_list) > 0:
+                try:
+                    first_date = message_list[0].ReceivedTime
+                    last_date = message_list[-1].ReceivedTime
+                    logging.info(f"Email date range: {first_date} to {last_date}")
+                except Exception as date_error:
+                    logging.warning(f"Could not determine date range: {date_error}")
+
+            for i, message in enumerate(message_list):
+                processed_count += 1
+                if processed_count % 20 == 0:
+                    self.status_label.config(
+                        text=f"📧 Scanning... Processed {processed_count} emails, found {email_count} with filtered attachments")
+                    self.dialog.update()
 
                 try:
                     if message.Attachments.Count > 0:
-                        # Add email to tree
-                        subject = message.Subject or "(No Subject)"
-                        sender = message.SenderName or "(Unknown Sender)"
-                        date = message.ReceivedTime.strftime("%Y-%m-%d %H:%M")
-                        att_count = message.Attachments.Count
-
-                        # Use iid for index
-                        email_item = self.email_tree.insert("", tk.END, iid=str(i), values=(
-                            subject[:50] + "..." if len(subject) > 50 else subject,
-                            sender[:30] + "..." if len(sender) > 30 else sender,
-                            date,
-                            str(att_count)
-                        ))
-
-                        # Add attachments to attachment tree (only Excel, PDF, and Word files)
+                        # Check if this email has any attachments with the filtered extensions
+                        has_filtered_attachments = False
+                        filtered_attachments = []
+                        
                         for att in message.Attachments:
                             file_extension = Path(att.FileName).suffix.lower()
-                            # Only show Excel, PDF, and Word files
-                            if file_extension in ['.xlsx', '.xls', '.pdf', '.docx', '.doc']:
-                                att_size = getattr(att, 'Size', 0)
+                            if file_extension in filtered_extensions:
+                                has_filtered_attachments = True
+                                filtered_attachments.append(att)
+
+                        if has_filtered_attachments:
+                            # Add email to tree
+                            subject = message.Subject or "(No Subject)"
+                            sender = message.SenderName or "(Unknown Sender)"
+                            date = message.ReceivedTime.strftime("%Y-%m-%d %H:%M")
+                            filtered_att_count = len(filtered_attachments)
+
+                            # Use iid for index
+                            email_item = self.email_tree.insert("", tk.END, iid=str(i), values=(
+                                subject[:50] + "..." if len(subject) > 50 else subject,
+                                sender[:30] + "..." if len(sender) > 30 else sender,
+                                date,
+                                str(filtered_att_count)
+                            ))
+
+                            # Add filtered attachments to attachment tree
+                            for att in filtered_attachments:
+                                file_extension = Path(att.FileName).suffix.lower()
                                 att_type = Path(att.FileName).suffix.upper() or "FILE"
+                                email_date = message.ReceivedTime.strftime("%Y-%m-%d %H:%M")
                                 # Use iid as "emailIndex:attIndex"
                                 att_item = self.attachment_tree.insert("", tk.END, iid=f"{i}:{att.Index}", values=(
                                     att.FileName,
-                                    self.format_file_size(att_size),
+                                    email_date,
                                     att_type,
                                     subject[:40] + "..." if len(subject) > 40 else subject
                                 ))
-
                                 attachment_count += 1
 
-                        email_count += 1
-
-                        if email_count % 5 == 0:
-                            self.status_label.config(
-                                text=f"📧 Loaded {email_count} emails, {attachment_count} Excel/PDF/Word attachments...")
-                            self.dialog.update()
+                            email_count += 1
 
                 except Exception as e:
+                    logging.warning(f"Skipping problematic email at index {i}: {str(e)}")
                     continue  # Skip problematic emails
 
-            self.status_label.config(text=f"✅ Loaded {email_count} emails with {attachment_count} Excel/PDF/Word attachments")
+            # Show detailed results
+            status_text = f"✅ Processed {processed_count} emails. Found {email_count} with {attachment_count} filtered attachments"
+            if len(message_list) < 100:
+                status_text += f"\n⚠️ Only {len(message_list)} total emails found - Outlook may have filters applied"
+            self.status_label.config(text=status_text)
+            logging.info(f"Successfully processed {processed_count} emails. Found {email_count} with {attachment_count} filtered attachments.")
 
         except Exception as e:
             error_msg = str(e)
             self.status_label.config(text=f"❌ Error loading Outlook data: {error_msg}")
             messagebox.showerror("Outlook Error", f"Failed to load Outlook data:\n{error_msg}")
+            logging.exception("Error while fetching emails from Outlook:")
 
     def format_file_size(self, size_bytes):
         """Format file size in human readable format"""

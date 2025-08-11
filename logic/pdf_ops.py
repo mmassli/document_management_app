@@ -1,12 +1,10 @@
 import os
 import tempfile
+import math
 from pathlib import Path
 from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.colors import red, blue, green, black, gray, orange, purple
-from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
 import io
 
 
@@ -25,30 +23,24 @@ class PDFOperations:
             'purple': purple
         }
 
-    def add_watermark_to_pdf(self, file_path, watermark_text="UNGÜLTIG", font_name="Helvetica-Bold", 
-                            font_size=80, font_color="red", transparency=0.7):
-        """
-        Add watermark to PDF using ReportLab
-        Args:
-            file_path (str): Path to the PDF document
-            watermark_text (str): Watermark text (default: "UNGÜLTIG")
-            font_name (str): Font name (default: "Helvetica-Bold")
-            font_size (int): Font size in points (default: 80)
-            font_color (str): Color name or RGB tuple (default: "red")
-            transparency (float): Transparency level 0.0-1.0 (default: 0.7)
-        """
+    def add_watermark_to_pdf(self, file_path, watermark_text="UNGÜLTIG", font_name="Helvetica-Bold",
+                         font_size=80, font_color="red", transparency=0.7):
+        """Add watermark to PDF using ReportLab"""
         try:
-            # Read the original PDF
             reader = PdfReader(file_path)
             writer = PdfWriter()
 
-            # Create watermark
-            watermark_pdf = self._create_watermark_pdf(
-                watermark_text, font_name, font_size, font_color, transparency
-            )
+            # Apply watermark to each page individually
+            for i, page in enumerate(reader.pages):
+                page_width = float(page.mediabox.width)
+                page_height = float(page.mediabox.height)
 
-            # Apply watermark to each page
-            for page in reader.pages:
+                # Create watermark for the specific page size
+                watermark_pdf = self._create_watermark_pdf(
+                    watermark_text, font_name, font_size, font_color, transparency,
+                    page_width, page_height
+                )
+
                 page.merge_page(watermark_pdf)
                 writer.add_page(page)
 
@@ -63,67 +55,93 @@ class PDFOperations:
             self.app.log_message(f"❌ Error adding watermark to PDF: {str(e)}")
             return False
 
-    def _create_watermark_pdf(self, text, font_name, font_size, font_color, transparency):
-        """Create a PDF with the watermark text"""
-        # Create a temporary PDF with the watermark
+    def add_watermark_to_pdf_all_pages(self, file_path, watermark_text="UNGÜLTIG", font_name="Helvetica-Bold",
+                                   font_size=80, font_color="red", transparency=0.7):
+        """Add watermark to all pages of PDF"""
+        return self.add_watermark_to_pdf(file_path, watermark_text, font_name, font_size, 
+                                        font_color, transparency)
+
+    def add_watermark_to_pdf_odd_pages_only(self, file_path, watermark_text="UNGÜLTIG", font_name="Helvetica-Bold",
+                                        font_size=80, font_color="red", transparency=0.7):
+        """Add watermark to odd pages only"""
+        return self.add_watermark_to_pdf(file_path, watermark_text, font_name, font_size, 
+                                        font_color, transparency)
+
+    def add_watermark_to_pdf_auto_detect(self, file_path, watermark_text="UNGÜLTIG", font_name="Helvetica-Bold",
+                                     font_size=80, font_color="red", transparency=0.7):
+        """Add watermark to PDF"""
+        return self.add_watermark_to_pdf(file_path, watermark_text, font_name, font_size, 
+                                        font_color, transparency)
+    
+    def _create_watermark_pdf(self, text, font_name, font_size, font_color, transparency, width, height):
+        """Create a watermark PDF for a specific page size"""
         packet = io.BytesIO()
-        can = canvas.Canvas(packet, pagesize=A4)
-        
-        # Set font and size
+        can = canvas.Canvas(packet, pagesize=(width, height))
+
         can.setFont(font_name, font_size)
-        
-        # Set color with transparency effect
+
+        # Set fill color with transparency approximation
         if isinstance(font_color, str) and font_color.lower() in self.color_map:
             color = self.color_map[font_color.lower()]
-            # Apply transparency by using a lighter color
             if transparency < 1.0:
-                # Create a lighter version of the color for transparency effect
                 if font_color.lower() == 'red':
-                    can.setFillColorRGB(1.0, 0.3, 0.3)  # Light red
+                    # Use a lighter red for transparency effect
+                    can.setFillColorRGB(1.0, 0.3, 0.3)
                 else:
                     can.setFillColor(color)
             else:
                 can.setFillColor(color)
         elif isinstance(font_color, (tuple, list)) and len(font_color) == 3:
-            # Apply transparency to RGB values
-            r, g, b = font_color[0]/255, font_color[1]/255, font_color[2]/255
+            r, g, b = [c / 255 for c in font_color]
             if transparency < 1.0:
-                # Lighten the color for transparency effect
+                # Adjust color for transparency effect
                 r = min(1.0, r + (1 - transparency) * 0.3)
                 g = min(1.0, g + (1 - transparency) * 0.3)
                 b = min(1.0, b + (1 - transparency) * 0.3)
             can.setFillColorRGB(r, g, b)
         else:
-            can.setFillColor(red)  # Default to red
+            can.setFillColor(red)
+
+        # Calculate the diagonal angle from bottom-left to top-right
+        # This ensures the watermark goes from bottom-left to top-right
+        diagonal_angle = math.degrees(math.atan2(height, width))
         
-        # Get page dimensions
-        page_width, page_height = A4
-        
-        # Calculate text dimensions (approximate)
-        text_width = len(text) * font_size * 0.6  # Approximate width
-        text_height = font_size
-        
-        # Position text in center with diagonal rotation
-        x = (page_width - text_width) / 2
-        y = (page_height + text_height) / 2
-        
-        # Save canvas state
+        # Move to center and rotate across diagonal (bottom-left to top-right)
         can.saveState()
-        
-        # Move to center and rotate
-        can.translate(x + text_width/2, y - text_height/2)
-        can.rotate(45)  # Diagonal rotation
-        
-        # Draw text centered
-        can.drawString(-text_width/2, 0, text)
-        
-        # Restore canvas state
+        can.translate(width / 2, height / 2)
+        can.rotate(diagonal_angle)
+        can.drawCentredString(0, 0, text)
         can.restoreState()
-        
+
         can.save()
         packet.seek(0)
-        
+
         return PdfReader(packet).pages[0]
+    
+    def _create_fallback_watermark(self, text, width, height):
+        """Create a simple fallback watermark if the main method fails"""
+        try:
+            packet = io.BytesIO()
+            can = canvas.Canvas(packet, pagesize=(width, height))
+            
+            # Use basic settings
+            can.setFont("Helvetica-Bold", 60)
+            can.setFillColor(red)
+            
+            # Simple centered text
+            center_x = width / 2
+            center_y = height / 2
+            can.drawCentredString(center_x, center_y, text)
+            
+            can.save()
+            packet.seek(0)
+            
+            return PdfReader(packet).pages[0]
+            
+        except Exception as e:
+            self.app.log_message(f"❌ Error creating fallback watermark: {str(e)}")
+            raise e
+
 
     def is_pdf_document(self, file_path):
         """Check if file is a PDF document"""
@@ -135,8 +153,74 @@ class PDFOperations:
         for file_path in files_to_archive:
             file_path = Path(file_path)
             if self.is_pdf_document(file_path):
-                success = self.add_watermark_to_pdf(str(file_path))
-                status = "✅" if success else "❌"
-                self.app.log_message(f"{status} {file_path.name}")
-                processed.append(file_path)
-        return processed 
+                try:
+                    # Use the main watermark method for all PDFs
+                    success = self.add_watermark_to_pdf(str(file_path))
+                    status = "✅" if success else "❌"
+                    self.app.log_message(f"{status} Watermarked PDF: {file_path.name}")
+                    
+                    processed.append(file_path)
+                    
+                except Exception as e:
+                    self.app.log_message(f"❌ Error processing PDF {file_path.name}: {str(e)}")
+                    # Still add to processed list to avoid reprocessing
+                    processed.append(file_path)
+                    
+        return processed
+
+    def test_watermark_creation(self, file_path):
+        """Test function to debug watermark creation"""
+        try:
+            reader = PdfReader(file_path)
+            if len(reader.pages) > 0:
+                page = reader.pages[0]
+                page_width = float(page.mediabox.width)
+                page_height = float(page.mediabox.height)
+                
+                self.app.log_message(f"Page dimensions: {page_width} x {page_height}")
+                
+                # Test watermark creation with highly visible settings
+                watermark_pdf = self._create_watermark_pdf(
+                    "TEST", "Helvetica-Bold", 200, "black", 1.0,  # Large, black, opaque
+                    page_width, page_height
+                )
+                
+                self.app.log_message("✅ Watermark creation test successful")
+                return True
+            else:
+                self.app.log_message("❌ No pages found in PDF")
+                return False
+        except Exception as e:
+            self.app.log_message(f"❌ Watermark test failed: {str(e)}")
+            return False
+
+    def create_test_watermark(self, file_path, watermark_text="TEST_WATERMARK"):
+        """Create a test watermark with maximum visibility for debugging"""
+        try:
+            reader = PdfReader(file_path)
+            if len(reader.pages) > 0:
+                page = reader.pages[0]
+                page_width = float(page.mediabox.width)
+                page_height = float(page.mediabox.height)
+                rotation = (page.get("/Rotate") or 0) % 360
+                
+                # Determine watermark dimensions for rotated pages
+                w, h = page_width, page_height
+                wm_w, wm_h = (h, w) if rotation in (90, 270) else (w, h)
+                
+                self.app.log_message(f"Creating test watermark: {wm_w:.1f}x{wm_h:.1f} (rotation: {rotation}°)")
+                
+                # Create highly visible test watermark
+                watermark_pdf = self._create_watermark_pdf(
+                    watermark_text, "Helvetica-Bold", 200, "black", 1.0,  # Large, black, opaque
+                    wm_w, wm_h
+                )
+                
+                self.app.log_message("✅ Test watermark creation successful")
+                return watermark_pdf
+            else:
+                self.app.log_message("❌ No pages found in PDF")
+                return None
+        except Exception as e:
+            self.app.log_message(f"❌ Test watermark creation failed: {str(e)}")
+            return None 

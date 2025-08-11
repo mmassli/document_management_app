@@ -12,6 +12,7 @@ import datetime
 import threading
 import hashlib
 import tempfile
+import sys
 
 
 from gui.dialogs import OutlookAttachmentDialog, ProgressDialog
@@ -25,7 +26,7 @@ from utils.outlook import OUTLOOK_AVAILABLE
 from utils.logging import LoggingMixin
 from gui.scrollable_frame import VerticalScrolledFrame
 
-CONFIG_FILE = 'file_replacer_config.json'
+# Use config manager's path handling
 DEFAULT_TARGET = str(Path.home() / 'Desktop')
 DEFAULT_ARCHIVE = str(Path.home() / 'Desktop' / 'Archive')
 
@@ -71,8 +72,30 @@ class FileReplacerApp(LoggingMixin):
     def set_window_icon(self):
         """Set application icon if available"""
         try:
-            self.root.iconbitmap("app_icon.ico")
-        except:
+            # Try multiple possible icon paths for different environments
+            icon_paths = [
+                "app_icon.ico",  # Current directory
+                os.path.join(os.path.dirname(sys.executable), "app_icon.ico"),  # Executable directory
+                os.path.join(os.path.dirname(__file__), "..", "app_icon.ico"),  # Relative to this file
+            ]
+            
+            icon_set = False
+            for icon_path in icon_paths:
+                if os.path.exists(icon_path):
+                    try:
+                        self.root.iconbitmap(icon_path)
+                        icon_set = True
+                        self.log_message(f"✅ Application icon set from: {icon_path}")
+                        break
+                    except Exception as e:
+                        self.log_message(f"⚠️ Failed to set icon from {icon_path}: {e}")
+                        continue
+            
+            if not icon_set:
+                self.log_message("⚠️ No valid icon file found")
+                
+        except Exception as e:
+            self.log_message(f"⚠️ Error setting window icon: {e}")
             pass
 
     def setup_styles(self):
@@ -733,17 +756,40 @@ class FileReplacerApp(LoggingMixin):
 
             # Process duplicates for preview
             self.log_message(f"🔄 Preview: Processing {len(attachment_paths)} files for duplicates...")
-            files_to_process = self.file_ops.process_duplicate_files(attachment_paths)
+            files_to_process, file_groups = self.file_ops.process_duplicate_files(attachment_paths)
 
             # Build preview text
             preview_text = f"File Replacement Preview:\n\n"
             preview_text += f"Total files selected: {len(attachment_paths)}\n"
-            preview_text += f"Unique files to process: {len(files_to_process)}\n\n"
+            preview_text += f"Files to process: {len(files_to_process)}\n"
+            
+            # Show duplicate handling info
+            duplicate_groups = [name for name, info in file_groups.items() if info.get('has_multiple_formats', False)]
+            if duplicate_groups:
+                preview_text += f"Duplicate groups found: {len(duplicate_groups)}\n"
+                for group_name in duplicate_groups:
+                    group_info = file_groups[group_name]
+                    file_names = [f.name for f in group_info['files']]
+                    preview_text += f"  - '{group_name}': {', '.join(file_names)}\n"
+            else:
+                preview_text += "No duplicate files found\n"
+            preview_text += "\n"
 
             for i, attachment_path in enumerate(files_to_process, 1):
                 preview_text += f"File {i}: {attachment_path.name}\n"
                 preview_text += f"Size: {self.format_file_size(attachment_path.stat().st_size)}\n"
                 preview_text += f"Modified: {datetime.datetime.fromtimestamp(attachment_path.stat().st_mtime)}\n"
+
+                # Check if this is a priority file for Excel tracking
+                base_name = attachment_path.stem
+                if base_name in file_groups:
+                    group_info = file_groups[base_name]
+                    if group_info.get('has_multiple_formats', False):
+                        priority_file = group_info['priority_file']
+                        if attachment_path == priority_file:
+                            preview_text += f"📋 Excel tracking: This file will be used for Excel entry\n"
+                        else:
+                            preview_text += f"📋 Excel tracking: {priority_file.name} will be used for Excel entry\n"
 
                 # Find matching files in target directory by first 10 characters AND same extension
                 attachment_prefix = attachment_path.name[:10]
@@ -808,16 +854,16 @@ class FileReplacerApp(LoggingMixin):
             else:
                 attachment_paths = [Path(attachment_paths_str)]
 
-            # Process duplicates and get unique files to process
+            # Process duplicates and get all files to process with grouping info
             self.log_message(f"🔄 Processing {len(attachment_paths)} files for duplicates...")
-            files_to_process = self.file_ops.process_duplicate_files(attachment_paths)
+            files_to_process, file_groups = self.file_ops.process_duplicate_files(attachment_paths)
             
             total_files = len(files_to_process)
             processed_files = 0
             failed_files = []
 
-            progress.update_progress(0, f"Starting processing of {total_files} unique files...")
-            self.log_message(f"Starting file replacement process for {total_files} unique files")
+            progress.update_progress(0, f"Starting processing of {total_files} files...")
+            self.log_message(f"Starting file replacement process for {total_files} files")
 
             # Create archive directory if it doesn't exist
             archive_dir.mkdir(parents=True, exist_ok=True)
@@ -875,23 +921,131 @@ class FileReplacerApp(LoggingMixin):
                         if not self.file_ops.verify_file_copy(attachment_path, target_file):
                             raise Exception("Replacement verification failed - files differ")
 
-                    # Excel tracking functionality
+                    # Excel tracking functionality - only update once per base name group
                     try:
+                        self.log_message(f"🔍 Starting Excel tracking logic for: {attachment_path.name}")
+                        
                         # Extract doc_prefix from filename (first 10 characters)
                         doc_prefix = attachment_path.name[:10]
-                        self.log_message(f"🔍 Updating Excel tracking with doc_prefix: '{doc_prefix}'")
+                        base_name = attachment_path.stem
                         
-                        # Check if enhanced operation should be used (V1.0 file with no matching files)
-                        use_enhanced_operation = is_v1_file and not matching_files
-                        if use_enhanced_operation:
-                            self.log_message(f"🚀 Using enhanced operation for V1.0 file: {attachment_path.name}")
+                        self.log_message(f"🔍 Doc prefix: {doc_prefix}, Base name: {base_name}")
+                        self.log_message(f"🔍 File groups: {list(file_groups.keys())}")
                         
-                        # Call Excel tracking update
-                        success = self.excel_ops.update_excel_tracking(doc_prefix, attachment_path.name)
-                        if success:
-                            self.log_message(f"✅ Excel tracking updated successfully for {attachment_path.name}")
+                        # Check if this is the first file in a group or a single file
+                        should_update_excel = False
+                        priority_file = None
+                        has_multiple_formats = False
+                        
+                        if base_name in file_groups:
+                            self.log_message(f"🔍 Found base name '{base_name}' in file groups")
+                            group_info = file_groups[base_name]
+                            self.log_message(f"🔍 Group info type: {type(group_info)}")
+                            
+                            if isinstance(group_info, dict) and 'priority_file' in group_info:
+                                self.log_message(f"🔍 Group info is dict with priority_file: {group_info['priority_file']}")
+                                # This is a grouped file (duplicate files with same base name)
+                                # Compare by filename instead of full path to handle Outlook temp files
+                                priority_filename = group_info['priority_file'].name
+                                current_filename = attachment_path.name
+                                self.log_message(f"🔍 Comparing filenames: '{current_filename}' == '{priority_filename}'")
+                                
+                                if current_filename == priority_filename:
+                                    self.log_message(f"🔍 This is the priority file: {attachment_path.name}")
+                                    # This is the priority file (PDF) in a duplicate group
+                                    
+                                    # Check if this is a V1.0 file
+                                    is_v1_file = False
+                                    v_index = attachment_path.name.find('V')
+                                    if v_index != -1 and v_index + 1 < len(attachment_path.name):
+                                        char_beside_v = attachment_path.name[v_index + 1]
+                                        if char_beside_v == '1':
+                                            is_v1_file = True
+                                    
+                                    self.log_message(f"🔍 Is V1.0 file: {is_v1_file}")
+                                    
+                                    if is_v1_file:
+                                        # V1.0 PDF files always behave like single files (ignore duplicate logic)
+                                        should_update_excel = True
+                                        priority_file = attachment_path
+                                        has_multiple_formats = False  # Treat as single file for Excel
+                                        self.log_message(f"🔍 V1.0 PDF in duplicate group - treating as single file for V1.0 processing: {attachment_path.name}")
+                                    else:
+                                        # Non-V1.0 PDF files use normal duplicate logic
+                                        if matching_files:
+                                            # Target match found - normal duplicate processing
+                                            should_update_excel = True
+                                            priority_file = attachment_path  # Use current file for Excel tracking (handles Outlook temp paths)
+                                            has_multiple_formats = group_info.get('has_multiple_formats', False)
+                                            self.log_message(f"🔍 Updating Excel tracking for grouped files with base name '{base_name}' (priority file: {priority_file.name})")
+                                        else:
+                                            # No target match - PDF behaves like single file (in-place replacement)
+                                            should_update_excel = True
+                                            priority_file = attachment_path  # Use current file for Excel tracking
+                                            has_multiple_formats = False  # Treat as single file for Excel
+                                            self.log_message(f"🔍 No target match found for duplicate group '{base_name}' - PDF will do in-place replacement: {attachment_path.name}")
+                                else:
+                                    self.log_message(f"🔍 This is NOT the priority file: '{current_filename}' != '{priority_filename}'")
+                                    # This is a non-priority file (DOCX, XLSX) in a duplicate group
+                                    if matching_files:
+                                        # Target match found - skip Excel tracking (only PDF handles it)
+                                        should_update_excel = False
+                                        self.log_message(f"⏭️ Skipping Excel update for non-priority file in group: {attachment_path.name}")
+                                    else:
+                                        # No target match - non-priority files are processed but no Excel tracking
+                                        should_update_excel = False
+                                        self.log_message(f"⏭️ No target match for non-priority file '{attachment_path.name}' - processed without Excel tracking")
+                            else:
+                                self.log_message(f"🔍 Group info is not dict or missing priority_file: {group_info}")
+                                # Single file in group (fallback for old format)
+                                should_update_excel = True
+                                priority_file = attachment_path
+                                self.log_message(f"🔍 Updating Excel tracking for single file: {attachment_path.name}")
                         else:
-                            self.log_message(f"⚠️ Excel tracking update failed or no match found for {attachment_path.name}")
+                            self.log_message(f"🔍 Base name '{base_name}' NOT found in file groups")
+                            # Single file not in any group
+                            should_update_excel = True
+                            priority_file = attachment_path
+                            self.log_message(f"🔍 Updating Excel tracking for single file: {attachment_path.name}")
+                        
+                        self.log_message(f"🔍 Should update Excel: {should_update_excel}")
+                        
+                        if should_update_excel:
+                            # Check if enhanced operation should be used (V1.0 file with no matching files)
+                            use_enhanced_operation = is_v1_file and not matching_files
+                            if use_enhanced_operation:
+                                self.log_message(f"🚀 Using enhanced operation for V1.0 file: {priority_file.name}")
+                            
+                            # Debug: Log file source information
+                            attachment_path_str = str(attachment_path)
+                            temp_dir = tempfile.gettempdir()
+                            is_outlook_file = attachment_path_str.startswith(temp_dir)
+                            self.log_message(f"🔍 File source: {'Outlook' if is_outlook_file else 'Browser'} - {attachment_path.name}")
+                            
+                            # Call Excel tracking update with grouping info
+                            all_files_in_group = None
+                            if base_name in file_groups:
+                                group_info = file_groups[base_name]
+                                if isinstance(group_info, dict) and 'files' in group_info:
+                                    all_files_in_group = group_info['files']
+                            
+                            self.log_message(f"🔍 Calling Excel tracking update for: {priority_file.name}")
+                            success = self.excel_ops.update_excel_tracking(
+                                doc_prefix, 
+                                priority_file.name, 
+                                has_multiple_formats=has_multiple_formats,
+                                all_files_in_group=all_files_in_group
+                            )
+                            if success:
+                                if has_multiple_formats:
+                                    self.log_message(f"✅ Excel tracking updated successfully for grouped files with base name '{base_name}'")
+                                else:
+                                    self.log_message(f"✅ Excel tracking updated successfully for {priority_file.name}")
+                            else:
+                                self.log_message(f"⚠️ Excel tracking update failed or no match found for {priority_file.name}")
+                        else:
+                            self.log_message(f"⏭️ Skipping Excel update for {attachment_path.name} (not priority file in group)")
+                            
                     except Exception as e:
                         self.log_message(f"❌ Error updating Excel tracking for {attachment_path.name}: {str(e)}")
 

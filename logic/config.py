@@ -4,13 +4,22 @@ Configuration management for the application.
 
 import json
 import os
+import sys
 from pathlib import Path
 
-# Constants
-CONFIG_FILE = "file_replacer_config.json"
+# Constants - handle paths for both development and compiled environments
+if getattr(sys, 'frozen', False):
+    # Running as compiled executable
+    base_dir = os.path.dirname(sys.executable)
+    CONFIG_FILE = os.path.join(base_dir, "file_replacer_config.json")
+    LOG_FILE = os.path.join(base_dir, "file_replacer.log")
+else:
+    # Running in development
+    CONFIG_FILE = "file_replacer_config.json"
+    LOG_FILE = "file_replacer.log"
+
 DEFAULT_TARGET = str(Path.home() / "Desktop")
 DEFAULT_ARCHIVE = str(Path.home() / "Desktop" / "Archive")
-LOG_FILE = "file_replacer.log"
 
 
 class ConfigManager:

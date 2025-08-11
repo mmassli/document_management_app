@@ -17,8 +17,15 @@ if getattr(sys, 'frozen', False):
 else:
     os.chdir(os.path.dirname(__file__))
 
-# Set up logging
-logging.basicConfig(filename='app_debug.log', level=logging.DEBUG)
+# Set up logging with proper path handling
+if getattr(sys, 'frozen', False):
+    # Running as compiled executable
+    log_file = os.path.join(os.path.dirname(sys.executable), 'app_debug.log')
+else:
+    # Running in development
+    log_file = 'app_debug.log'
+
+logging.basicConfig(filename=log_file, level=logging.DEBUG)
 logging.info('Application started. Working directory: %s', os.getcwd())
 
 
